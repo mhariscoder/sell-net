@@ -34,4 +34,9 @@ export class ListingController {
     delete(@Param('id') id: string) {
         return this.listingService.delete(id);
     }
+
+    @Post('ebay-listing-batches')
+    fetchEbayListingsInBatches(@Body() data) {
+        return this.listingService.fetchEbayListingsInBatches(data);
+    }
 }

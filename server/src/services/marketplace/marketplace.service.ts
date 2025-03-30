@@ -15,7 +15,7 @@ export class MarketplaceService {
   async create(data: Marketplace): Promise<Marketplace> {
     const existingMarketplace = await this.marketplaceModel.findOne({ storeMarketplace: data.storeMarketplace }).exec();
     if (existingMarketplace) {
-      throw new ConflictException(`Marketplace with name ${data.storeMarketplace} already exists`);
+      throw new Error(`Marketplace with name ${data.storeMarketplace} already exists`);
     }
 
     const newMarketplace = new this.marketplaceModel(data);
@@ -37,7 +37,7 @@ export class MarketplaceService {
   async update(id: string, data: Partial<Marketplace>): Promise<Marketplace> {
     const existingMarketplace = await this.marketplaceModel.findOne({ storeMarketplace: data.storeMarketplace, _id: { $ne: id } }).exec();
     if (existingMarketplace) {
-      throw new ConflictException(`Marketplace with name ${data.storeMarketplace} already exists`);
+      throw new Error(`Marketplace with name ${data.storeMarketplace} already exists`);
     }
 
     const updatedMarketplace = await this.marketplaceModel.findByIdAndUpdate(id, data, {
