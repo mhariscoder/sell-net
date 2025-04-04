@@ -25,69 +25,50 @@ export class Listing extends Document {
   updateType: string;
 
   // ListingInfo fields
-  @Prop({ type: String })
-  'listingInfo.title': string;
-
-  @Prop({ type: Number })
-  'listingInfo.startPrice.value': number;
-
-  @Prop({ type: Boolean })
-  'listingInfo.startPrice.immutability': boolean;
-
-  @Prop({ type: Number })
-  'listingInfo.quantity': number;
-
-  @Prop({ type: Number })
-  'listingInfo.soldQuantity': number;
-
-  @Prop({ type: Number })
-  'listingInfo.categoryId': number;
+  @Prop({ type: Object })
+  listingInfo: {
+    title: string;
+    startPrice: {
+      value: number;
+      immutability: boolean;
+    };
+    quantity: number;
+    soldQuantity: number;
+    categoryId: number;
+  };
 
   // PreviousInfo fields
-  @Prop({ type: String })
-  'previousInfo.title': string;
-
-  @Prop({ type: Number })
-  'previousInfo.startPrice': number;
-
-  @Prop({ type: Number })
-  'previousInfo.quantity': number;
+  @Prop({ type: Object })
+  previousInfo: {
+    title: string;
+    startPrice: number;
+    quantity: number;
+  };
 
   // InventoryInfo fields
-  @Prop({ type: MongooseSchema.Types.Mixed })
-  'inventoryInfo.prices': any;
-
-  @Prop({ type: Number })
-  'inventoryInfo.weightLb': number;
-
-  @Prop({ type: String })
-  'inventoryInfo.oem': string;
-
-  @Prop({ type: String })
-  'inventoryInfo.partslink': string;
-
-  @Prop({ type: String })
-  'inventoryInfo.itemNumber': string;
-
-  @Prop({ type: String })
-  'inventoryInfo.appliedFormula': string;
-
-  @Prop({ type: String })
-  'inventoryInfo.description': string;
-
-  @Prop({ type: Number })
-  'inventoryInfo.quantity': number;
-
-  @Prop({ type: Number })
-  'inventoryInfo.shippingCost': number;
+  @Prop({ type: Object })
+  inventoryInfo: {
+    prices: any;
+    weightLb: number;
+    oem: string;
+    partslink: string;
+    itemNumber: string;
+    appliedFormula: string;
+    description: string;
+    quantity: number;
+    shippingCost: number;
+  };
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   marketplaceInfo: any;
 
-  @Prop([{ type: MongooseSchema.Types.Mixed }])
+  @Prop([MongooseSchema.Types.Mixed])
   suppliersPrices: any[];
 
-  @Prop([{ id: String, message: String }])
+  @Prop([{
+    id: { type: String },
+    message: { type: String }
+  }])
   errorLogs: { id: string; message: string }[];
 
   @Prop({ type: Boolean })

@@ -7,6 +7,7 @@ import { Model } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
 import { decrypt } from 'src/helper';
 import { Marketplace } from '../marketplace/schemas/marketplace.schema';
+import { Store } from '../store/schemas/store.schema';
 
 @Injectable({})
 export class ListingService {
@@ -14,6 +15,7 @@ export class ListingService {
         private readonly httpService: HttpService,
         @InjectModel(Listing.name, 'DATABASE_CONNECTION') private readonly listingModel: Model<Listing>,
         @InjectModel(Marketplace.name, 'DATABASE_CONNECTION') private readonly marketplaceModel: Model<Marketplace>,
+        @InjectModel(Store.name, 'DATABASE_CONNECTION') private readonly storeModel: Model<Store>
     ) {}
 
     async create(data: any): Promise<any> {
@@ -43,8 +45,10 @@ export class ListingService {
             const marketplace = await this.marketplaceModel.findOne({ storeMarketplace: 'ebay' }).exec();
             if (!marketplace) throw new NotFoundException(`Invalid marketplace!`);
 
+            const store = await this.storeModel.findOne({ "fetch.switch": true });
+            if (!marketplace) throw new NotFoundException(`Invalid store!`);
+
             const decryptedToken = marketplace.apiOAuthToken;
-            
             
             const processItemIds = async (itemIds: string[]) => {
                 for (const itemId of itemIds) {
@@ -55,25 +59,24 @@ export class ListingService {
                     }
                 }
             };
-
-            store = {
-                fetch: {
-                    itemIds: [
-                        {
-                            itemId: 396249957515
-                        }
-                    ],
-                    specifiedItemIds: true
-                },
-                
-            };
+            
+            // store = {
+            //     fetch: {
+            //         itemIds: [
+            //             {
+            //                 itemId: '396249957515'
+            //             }
+            //         ],
+            //         specifiedItemIds: true
+            //     },
+            // };
 
             console.log('store', store)
     
             if (store.fetch.specifiedItemIds) {
                 console.log('specifiedItemIds', store.fetch.specifiedItemIds)
 
-                const mapData = await processItemIds(store.fetch.itemIds.map(obj => obj.itemId));
+                const mapData = await processItemIds(store.fetch.itemIds);
                 console.log('mapData', mapData)
                 return;
             }
@@ -132,7 +135,7 @@ export class ListingService {
                     await processItemIds(newItemsToProcess);
                     pageNumber++;
                 } else {
-                    // break;
+                    break;
                 }
             } while (pageNumber <= totalPages);
         } catch (error) {
@@ -141,71 +144,69 @@ export class ListingService {
     }
 
     async fetchEbayListing(itemId: string, decryptedToken: string, store: any): Promise<void> {
-        
-
         try {
-          const headers = {
-            'X-EBAY-API-SITEID': '0',
-            'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
-            'X-EBAY-API-CALL-NAME': 'GetItem',
-            'X-EBAY-API-IAF-TOKEN': decryptedToken,
-            'Content-Type': 'text/xml;charset=UTF-8',
-          };
-    
-          const body = `
-            <?xml version="1.0" encoding="utf-8"?>
-            <GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-              <RequesterCredentials>
-                <eBayAuthToken>${decryptedToken}</eBayAuthToken>
-              </RequesterCredentials>
-              <ErrorLanguage>en_US</ErrorLanguage>
-              <WarningLevel>High</WarningLevel>
-              <ItemID>${itemId}</ItemID>
-            </GetItemRequest>
-          `;
-    
-          const response = await firstValueFrom(
-            this.httpService.post('https://api.ebay.com/ws/api.dll', body, { headers }),
-          );
-    
-          const jsonData = await parseStringPromise(response.data, { explicitArray: false });
-    
-          if (jsonData.GetItemResponse.Ack === 'Failure') {
-            const errors = jsonData.GetItemResponse.Errors;
-            console.error(`Error fetching item ${itemId}:`, errors);
-            return;
-          }
-    
-          const item = jsonData.GetItemResponse.Item;
-    
-          const listingInfo = {
-            title: item.Title,
-            startPrice: {
-              value: parseFloat(item.StartPrice._),
-              immutability: false,
-            },
-            quantity: parseInt(item.Quantity, 10) - parseInt(item.SellingStatus.QuantitySold, 10),
-          };
-    
-          const listing = {
-            itemId: item.ItemID,
-            sku: item.SKU,
-            storeId: store._id,
-            listingInfo: {
-              ...listingInfo,
-              categoryId: item.PrimaryCategory.CategoryID,
-              soldQuantity: parseInt(item.SellingStatus.QuantitySold, 10),
-            },
-            previousInfo: { ...listingInfo },
-            synced: false,
-            status: 'sync',
-            updateType: 'sync',
-          };
-    
-          const existingListing = await this.listingModel.findOne(item.ItemID);
-          if (!existingListing) {
-            await this.listingModel.create(listing);
-          }
+            const headers = {
+                'X-EBAY-API-SITEID': '0',
+                'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+                'X-EBAY-API-CALL-NAME': 'GetItem',
+                'X-EBAY-API-IAF-TOKEN': decryptedToken,
+                'Content-Type': 'text/xml;charset=UTF-8',
+            };
+        
+            const body = `
+                <?xml version="1.0" encoding="utf-8"?>
+                <GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+                <RequesterCredentials>
+                    <eBayAuthToken>${decryptedToken}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <ItemID>${itemId}</ItemID>
+                </GetItemRequest>
+            `;
+        
+            const response = await firstValueFrom(
+                this.httpService.post('https://api.ebay.com/ws/api.dll', body, { headers }),
+            );
+        
+            const jsonData = await parseStringPromise(response.data, { explicitArray: false });
+        
+            if (jsonData.GetItemResponse.Ack === 'Failure') {
+                const errors = jsonData.GetItemResponse.Errors;
+                console.error(`Error fetching item ${itemId}:`, errors);
+                return;
+            }
+        
+            const item = jsonData.GetItemResponse.Item;
+        
+            const listingInfo = {
+                title: item.Title,
+                startPrice: {
+                    value: parseFloat(item.StartPrice._),
+                    immutability: false,
+                },
+                quantity: parseInt(item.Quantity, 10) - parseInt(item.SellingStatus.QuantitySold, 10),
+            };
+        
+            const listing = {
+                itemId: item.ItemID,
+                sku: item.SKU,
+                storeId: store._id,
+                listingInfo: {
+                    ...listingInfo,
+                    categoryId: item.PrimaryCategory.CategoryID,
+                    soldQuantity: parseInt(item.SellingStatus.QuantitySold, 10),
+                },
+                previousInfo: { ...listingInfo },
+                synced: false,
+                status: 'sync',
+                updateType: 'sync',
+            };
+        
+            const existingListing = await this.listingModel.findOne({ itemId: item.ItemID });
+            if (!existingListing) {
+                await this.listingModel.create(listing);
+            }
         } catch (error) {
           console.error(`Error in fetchEbayListing for itemId=${itemId}:`, error);
         }

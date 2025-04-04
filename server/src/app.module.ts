@@ -17,6 +17,7 @@ import { NotificationModule } from './services/notification/notification.module'
 import { InventoryManagementModule } from './services/inventory-management/inventory-management.module';
 import { ListingOptimizationModule } from './services/listing-optimization/listing-optimization.module';
 import { StoreSynchronizationModule } from './services/store-synchronization/store-synchronization.module';
+import { InventoryModule } from './services/inventory/inventory.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { StoreSynchronizationModule } from './services/store-synchronization/sto
     InventoryManagementModule,
     ListingOptimizationModule,
     StoreSynchronizationModule,
+    InventoryModule
   ],
   controllers: [],
   providers: [],

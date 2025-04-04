@@ -10,6 +10,7 @@ import { Listing, ListingSchema } from './schemas/listing.schema';
 import { HttpModule } from '@nestjs/axios';
 import { MarketplaceModule } from '../marketplace/marketplace.module';
 import { Marketplace, MarketplaceSchema } from '../marketplace/schemas/marketplace.schema';
+import { Store, StoreSchema } from '../store/schemas/store.schema';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { Marketplace, MarketplaceSchema } from '../marketplace/schemas/marketpla
     ListingDatabaseModule,
     MongooseModule.forFeature([{ name: Listing.name, schema: ListingSchema }], 'DATABASE_CONNECTION'),
     MongooseModule.forFeature([{ name: Marketplace.name, schema: MarketplaceSchema }], 'DATABASE_CONNECTION'),
+    MongooseModule.forFeature([{ name: Store.name, schema: StoreSchema }], 'DATABASE_CONNECTION'),
   ],
   controllers: [ListingController],
   providers: [ListingService],

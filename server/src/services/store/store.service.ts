@@ -50,4 +50,65 @@ export class StoreService {
         }
         return { message: `Store with ID ${id} successfully deleted` };
     }
+
+    async importData(csvData: any[]) {
+        if (!csvData || csvData.length === 0) {
+            throw new Error('CSV data is empty');
+        }
+    
+        const itemIds = [];
+    
+        await csvData.forEach(async (row) => {
+            await itemIds.push(row['Item number']);
+        });
+    
+        const storeDocument = {
+            storeMarketplace: 'ebay',
+            storeName: 'Hardcoded Store Name',
+            storeUsername: 'default_username',
+            storeEmail: 'default@store.com',
+            storePassword: 'defaultPassword123',
+            supplierIds: [],
+            supplierMarkUps: [],
+            syncSwitch: true,
+            storeRedirectUri: '',
+            fetch: {
+                switch: true,
+                specifiedItemIds: true,
+                itemIds: itemIds,
+            },
+            apiOAuthToken: {
+                accessToken: null,
+                accessTokenUpdatedDate: null,
+                applicationAccessToken: null,
+                applicationAccessTokenUpdatedDate: null,
+                refreshToken: null,
+                refreshTokenValid: false,
+                refreshTokenUpdatedDate: null,
+                source: 'manual',
+            },
+            sourcingSetup: {
+                supplierSourcingPriority: [],
+                supplierTolerance: [],
+                quantitySetup: [],
+            },
+            marketplaceOptions: {
+                optimalPricingWindow: {
+                    minimumSellerAllowedPricePercent: null,
+                    maximumSellerAllowedPricePercent: null,
+                },
+                sellerId: 'someSellerId',
+                marketplaceId: 'someMarketplaceId',
+                issueLocale: 'US',
+            },
+            analyzerConfig: {
+                ebayCommissionPercent: 10,
+                minimumProfitPercent: 5,
+            },
+            listingDescriptionTemplate: false,
+        };
+    
+        await this.storeModel.create(storeDocument);
+    }
+    
 }
