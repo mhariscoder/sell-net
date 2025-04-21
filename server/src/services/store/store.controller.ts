@@ -4,9 +4,10 @@ import { Store } from './schemas/store.schema';
 import { FileInterceptor } from '@nestjs/platform-express';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as csvParser from 'csv-parser';
-import * as iconv from 'iconv-lite';
+
+
 import { diskStorage } from 'multer';
+import { parseCsv } from 'src/helper';
 
 @Controller('v1/store')
 export class StoreController {
@@ -82,7 +83,7 @@ export class StoreController {
             const filePath = path.join(__dirname, 'uploads', file.filename);
 
             // Parse CSV and process data
-            const data = await this.parseCsv(filePath);
+            const data = await parseCsv(filePath);
 
             // Import the parsed data to the database
             await this.storeService.importData(data);
@@ -97,31 +98,5 @@ export class StoreController {
         }
     }
 
-    private async parseCsv(filePath: string): Promise<any[]> {
-        return new Promise((resolve, reject) => {
-            const result: any[] = [];
     
-            // Read the file, remove BOM (if present), and then parse the CSV
-            const fileBuffer = fs.readFileSync(filePath);
-            const fileWithoutBOM = iconv.decode(fileBuffer, 'utf8').replace(/^\uFEFF/, ''); // Remove BOM (if present)
-    
-            // Write the cleaned-up content to a temporary file
-            const tempFilePath = path.join(__dirname, 'uploads', 'cleaned-up-' + Date.now() + '.csv');
-            fs.writeFileSync(tempFilePath, fileWithoutBOM, 'utf8');
-    
-            // Parse the cleaned-up CSV file
-            fs.createReadStream(tempFilePath)
-                .pipe(csvParser())
-                .on('data', (row) => result.push(row))
-                .on('end', () => {
-                    // Remove the temporary cleaned-up file after processing
-                    fs.unlinkSync(tempFilePath);
-                    resolve(result);
-                })
-                .on('error', (err) => {
-                    fs.unlinkSync(tempFilePath);  // Clean up the temporary file on error
-                    reject(err);
-                });
-        });
-    }
 }

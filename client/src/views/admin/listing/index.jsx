@@ -88,11 +88,15 @@ export default function Listing() {
     findAll();
   }, []);
 
+  useEffect(() => {
+    console.log('listings', listings)
+  }, [listings]);
+
   return (
     <Box pt={{ base: "130px", md: "80px", xl: "80px" }}>
       <SimpleGrid mb="20px" columns={{ sm: 1, md: 1 }} spacing={{ base: "20px", xl: "20px" }}>
         <Table
-          columnsData={t("marketplace:columnsData", { returnObjects: true })}
+          columnsData={t("listing:columnsData", { returnObjects: true })}
           tableData={listings}
           headingData={"Listing"}
           onUpdate={handleUpdateClick}

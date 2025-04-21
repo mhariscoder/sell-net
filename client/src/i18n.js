@@ -24,6 +24,8 @@ import storeEnLng from './views/admin/store/languages/en.json';
 import storeUrLng from './views/admin/store/languages/ur.json';
 import marketplaceEnLng from './views/admin/marketplace/languages/en.json';
 import marketplaceUrLng from './views/admin/marketplace/languages/ur.json';
+import listingEnLng from './views/admin/listing/languages/en.json';
+import listingUrLng from './views/admin/listing/languages/ur.json';
 
 const resources = {
   en: {
@@ -37,7 +39,8 @@ const resources = {
     sample: sampleEnLng,
     qa: QAEnLng,
     store: storeEnLng,
-    marketplace: marketplaceEnLng
+    marketplace: marketplaceEnLng,
+    listing: listingEnLng
   },
   ur: {
     global: globalUrLng,
@@ -50,7 +53,8 @@ const resources = {
     sample: sampleUrLng,
     qa: QAUrLng,
     store: storeUrLng,
-    marketplace: marketplaceUrLng
+    marketplace: marketplaceUrLng,
+    listing: listingUrLng
   }
 };
 
@@ -60,7 +64,7 @@ i18n
     resources,
     lng: "en",
     fallbackLng: "en",
-    ns: ["global", "user", "profile", "truck", "roles", "permission", "sampleData", "qa", "sample", "store", "marketplace"],
+    ns: ["global", "user", "profile", "truck", "roles", "permission", "sampleData", "qa", "sample", "store", "marketplace", "listing"],
     defaultNS: "global",
     interpolation: {
       escapeValue: false

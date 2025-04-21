@@ -1,9 +1,48 @@
 {
   "columnsData": [
-    
+    {
+      "Header": "Title",
+      "accessor": "listingInfo.title"
+    },
+    {
+      "Header": "Price",
+      "accessor": "listingInfo.startPrice.value"
+    },
+    {
+      "Header": "Category Id",
+      "accessor": "listingInfo.categoryId"
+    },
+    {
+      "Header": "Quantity",
+      "accessor": "listingInfo.quantity"
+    },
+    {
+      "Header": "Sold Quantity",
+      "accessor": "listingInfo.soldQuantity"
+    },
+    {
+      "Header": "SKU",
+      "accessor": "sku"
+    },
+    {
+      "Header": "Status",
+      "accessor": "status"
+    },
+    {
+      "Header": "Update Type",
+      "accessor": "updateType"
+    },
+    {
+      "Header": "Created At",
+      "accessor": "createdAt"
+    },
+    {
+      "Header": "Updated At",
+      "accessor": "updatedAt"
+    }
   ],
   "createStore": "Create",
   "crudForm": {
-   
+
   }
 }

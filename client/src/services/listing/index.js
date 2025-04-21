@@ -1,6 +1,6 @@
 import { AxiosInstance } from "../../config/axios";
 import store from "store/redux";
-import { setAlldata } from "store/redux/slices/marketplace";
+import { setAlldata } from "store/redux/slices/listing";
 import { getAuthHeader } from "utils/auth-header";
 
 export const create = async (payload) => {

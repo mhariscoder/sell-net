@@ -82,6 +82,8 @@ export class Listing extends Document {
 
   @Prop({ type: Boolean })
   supplierCostAdjustment: boolean;
+
+  _id: string;
 }
 
 export const ListingSchema = SchemaFactory.createForClass(Listing);

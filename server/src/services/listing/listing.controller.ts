@@ -17,6 +17,21 @@ export class ListingController {
         return this.listingService.findAll();
     }
 
+    @Post('fetch-initialiser')
+    fetchInitialiser( @Body() data ) {
+        return this.listingService.fetchInitialiser(data);
+    }
+
+    @Post('ebay-listing-batches')
+    fetchEbayListingsInBatches() {
+        return this.listingService.fetchEbayListingsInBatches();
+    }
+
+    @Get('init-ebay-sync')
+    initEbaySync() {
+        return this.listingService.initSync();
+    }
+
     // ✅ Get Marketplace by ID
     @Get(':id')
     findOne(@Param('id') id: string) {
@@ -33,10 +48,5 @@ export class ListingController {
     @Delete(':id')
     delete(@Param('id') id: string) {
         return this.listingService.delete(id);
-    }
-
-    @Post('ebay-listing-batches')
-    fetchEbayListingsInBatches(@Body() data) {
-        return this.listingService.fetchEbayListingsInBatches(data);
     }
 }
