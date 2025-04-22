@@ -9,6 +9,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { decrypt } from 'src/helper';
 import { Marketplace } from '../marketplace/schemas/marketplace.schema';
 import { Store } from '../store/schemas/store.schema';
+import PriceCalculatorSupplier from '../../utils/priceCalculatorSupplier';
+import { CalculateShippingCost } from 'src/utils/calculateShippingCost';
+import { CalculateQuantity } from 'src/utils/calculateQuantity';
+import { HasInventoryChanged } from 'src/utils/hasInventoryChanged';
+import { BestSupplierItemOption } from 'src/utils/bestSupplierItemOption';
+import { FormatEbaySku } from 'src/utils/formatSku';
+import { GetMatchingInventoryItems } from 'src/utils/getMatchingInventoryItems';
+import { CombineSetItems } from 'src/utils/combineSetItems';
 
 @Injectable({})
 export class ListingService {
@@ -261,32 +269,353 @@ export class ListingService {
         }
     }
 
-    async initSync() {
-        try {
-            const listings = await this.listingModel.find({
-                status: 'sync',
-                synced: false,
-                // storeId: { $in: nonSyncedStores.map(store => store._id) }
-              }).exec();
+    // async initSync() {
+    //     try {
+    //         const listings = await this.listingModel.find({
+    //             status: 'sync',
+    //             synced: false,
+    //             // storeId: { $in: nonSyncedStores.map(store => store._id) }
+    //           }).exec();
 
-            if(listings && listings?.length > 0) {
-                listings?.forEach((listing) => {
-                    // this.ebayUpdateSyncedListing(
-                    //     true,
-                    //     null,
-                    //     listing,
+    //         if(listings && listings?.length > 0) {
+    //             listings?.forEach((listing) => {
+    //                 // this.ebayUpdateSyncedListing(
+    //                 //     true,
+    //                 //     null,
+    //                 //     listing,
 
-                    // );
-                });
-            }
+    //                 // );
+    //             });
+    //         }
 
-            console.log('listings', listings);
-        } catch (error) {
-            console.error('error', error)
+    //         console.log('listings', listings);
+    //     } catch (error) {
+    //         console.error('error', error)
+    //     }
+    // }
+
+    syncListing = async (
+        listing,
+        supplierInventoryMaps,
+        { stores, suppliers }
+      ) => {
+        const OriginalSku = listing.sku;
+        let listingIsSet = false;
+      
+        // remove prvious errors
+        await this.listingModel.updateOne({ _id: listing._id }, { $set: { errorLogs: [] } });
+      
+        // Store configuration
+        const store = stores[listing.storeId];
+        const decryptedToken = decrypt(store.apiOAuthToken.accessToken);
+      
+        if (/\s/.test(listing.sku)) {
+          listing.sku = listing.sku
+            .trim()
+            .split(" ")
+            .map(sku => FormatEbaySku(sku));
+      
+          listingIsSet = true;
+        } else {
+          listing.sku = FormatEbaySku(listing.sku).trim();
+        };
+      
+        let inventoryItems = GetMatchingInventoryItems(
+          listing.sku,
+          listingIsSet,
+          store,
+          supplierInventoryMaps
+        );
+      
+        if (listingIsSet && inventoryItems) {
+          inventoryItems = CombineSetItems(inventoryItems, listing.sku, suppliers);
+          listing.sku = listing.sku.join(' ');
+        };
+      
+        const errorRecord = {
+          errorSwitch: false,
+          majorError: false,
+          error: null,
+        };
+      
+        // revise listing
+        if (listing.updateType === 'revise') {
+          this.reviseListing(decryptedToken, store, suppliers, listing, errorRecord);
+      
+          if (errorRecord.errorSwitch && errorRecord.majorError) {
+            return { error: errorRecord.error };
+          } else {
+            return false;
+          }
         }
-    }
+      
+        // item not available
+        if (inventoryItems.length === 0) {
+          if (!errorRecord.errorSwitch && store.storeMarketplace === "ebay") {
+            await this.ebayUpdateSyncedListing(
+                false, 
+                errorRecord, 
+                listing,
 
-    async reviseListing(decryptedToken, store, suppliers, listing, errorRecord) {
+                // enhanced params
+                null,
+                null,
+                null,
+            );
+          } 
+        //   else if (!errorRecord.errorSwitch && store.storeMarketplace === "amazon") {
+        //     await this.amazonUpdateSyncedListing(
+        //         false,
+        //         errorRecord,
+        //         listing,
+        //         {
+        //             sellerId: store.marketplaceOptions.sellerId,
+        //             marketplaceId: store.marketplaceOptions.marketplaceId,
+        //             issueLocale: store.marketplaceOptions.issueLocale
+        //         }
+        //     );
+        //   }
+      
+          if (errorRecord.errorSwitch && errorRecord.majorError) {
+            return { error: errorRecord.error }
+          };
+      
+          await this.updateDatabaseSyncedListing(
+            false, 
+            false, 
+            listing, 
+            errorRecord.errorSwitch,
+
+            // enhanced params
+            null,
+            null,
+            null,
+        );
+          return false;
+        }
+      
+        const inventoryItem = await BestSupplierItemOption(
+          [...inventoryItems],
+          listing,
+          store,
+          suppliers
+        );
+      
+        try {
+          const supplierId = inventoryItem.supplierId;
+      
+          const supplierConfig = suppliers[`${supplierId}-config`];
+          const shippingInfo = suppliers[`${supplierId}-shipping`];
+          const shippingCost = await CalculateShippingCost(shippingInfo, inventoryItem, listing.sku);
+      
+          const inventoryQuantity = parseInt(inventoryItem.quantity);
+      
+          if (!HasInventoryChanged(listing, inventoryItem)) {
+            await this.listingModel.findByIdAndUpdate(listing._id, { synced: true });
+            return false;
+          }
+      
+          const storeMarkUp = store.supplierMarkUps.find(obj => obj.supplierId.toString() === supplierId.toString()).markUpPercent / 100;
+      
+          const calculator = PriceCalculatorSupplier.getCalculator(
+            supplierConfig.supplier,
+            storeMarkUp + 1,
+            inventoryItem.prices,
+            supplierConfig.priceFormulas,
+            shippingCost
+          );
+      
+          let { price: sellingPrice, formula } = calculator.calculate();
+          
+          if (sellingPrice === null) {
+            // console.error(`jobs => storeSyncing => func syncListing: ${listing.sku}:`, "selling price not avaliable");
+            await this.listingModel.updateOne(
+              { _id: listing._id },
+              { $push: { "errorLogs": { id: "selling price not avaliable", message: formula } } });
+      
+            if (!errorRecord.errorSwitch && store.storeMarketplace === "ebay") {
+                await this.ebayUpdateSyncedListing(
+                    false, 
+                    errorRecord, 
+                    listing,
+            
+                    // enhanced params
+                    null,
+                    null,
+                    null
+                );
+            } 
+            
+            // else if (!errorRecord.errorSwitch && store.storeMarketplace === "amazon") {
+            //   await amazonUpdateSyncedListing(
+            //     decryptedToken,
+            //     false,
+            //     errorRecord,
+            //     listing,
+            //     {
+            //       sellerId: store.marketplaceOptions.sellerId,
+            //       marketplaceId: store.marketplaceOptions.marketplaceId,
+            //       issueLocale: store.marketplaceOptions.issueLocale
+            //     }
+            //   );
+            // }
+      
+            if (errorRecord.errorSwitch && errorRecord.majorError) {
+              return { error: errorRecord.error };
+            }
+      
+            errorRecord.errorSwitch = true;
+            await this.updateDatabaseSyncedListing(false, false, listing, errorRecord.errorSwitch, null, null, null);
+          }
+      
+          const suppliersPrices = await this.getSuppliersPrices(store, suppliers, inventoryItems, listing);
+      
+          // // express parts change
+          // if (!shippingCost && supplierConfig.supplier === "expressParts") {
+          //   sellingPrice = parseFloat(inventoryItem.prices.net);
+          // } // needs changing
+      
+          if (store.storeMarketplace === "amazon") {
+            listing.sku = OriginalSku;
+          } else if (
+            supplierConfig.skuPrefix &&
+            store.storeMarketplace === "ebay"
+          ) {
+            listing.sku = `${supplierConfig.skuPrefix}-${listing.sku}`;
+          }
+      
+          const sku = listing.sku;
+          const title = listing.listingInfo.title;
+      
+          const fixedPrice = listing.listingInfo.startPrice.immutability;
+      
+          let startPrice = fixedPrice
+            ? listing.listingInfo.startPrice.value
+            : parseFloat(sellingPrice.toFixed(3)).toFixed(2);
+      
+          const competitorInfo = listing?.competitorInfo;
+      
+          if (listing?.supplierCostAdjustment && listing?.competitorInfo && !fixedPrice) {
+            const {
+              netPercent,
+              costPercent,
+              ebayCostPercent,
+              competitorPrice
+            } = listing.competitorInfo;
+      
+            const costCalculator = PriceCalculatorSupplier.getCalculator(
+              supplierConfig.supplier,
+              1,
+              inventoryItem.prices,
+              supplierConfig.priceFormulas,
+              shippingCost
+            );
+      
+            let { price: cost } = costCalculator.calculate();
+      
+            let ebayCost = cost * (ebayCostPercent / costPercent);
+            let netProfit = ebayCost * (netPercent / ebayCostPercent);
+      
+            startPrice = (cost + ebayCost + netProfit).toFixed(2);
+      
+            const {
+              ebayCommissionPercent,
+              minimumProfitPercent
+            } = store.analyzerConfig;
+      
+            if (startPrice > competitorPrice) {
+              ebayCost = cost * (ebayCommissionPercent / costPercent);
+              netProfit = ebayCost * (minimumProfitPercent / ebayCommissionPercent);
+      
+              startPrice = (cost + ebayCost + netProfit).toFixed(2);
+            }
+      
+            competitorInfo.cost = cost.toFixed(2);
+            competitorInfo.ebayCost = ebayCost.toFixed(2);
+            competitorInfo.net = netProfit.toFixed(2);
+          }
+      
+          const quantitySetup = store.sourcingSetup.quantitySetup
+            .find((supplier) => supplier.supplierId.toString() === supplierId.toString());
+      
+          const quantity = CalculateQuantity(inventoryQuantity, startPrice, quantitySetup);
+      
+          if (!errorRecord.errorSwitch && store.storeMarketplace === "ebay") {
+            await this.ebayUpdateSyncedListing(
+                true,
+                errorRecord,
+                listing,
+                startPrice,
+                quantity,
+                title
+            );
+          } 
+        //   else if (!errorRecord.errorSwitch && store.storeMarketplace === "amazon") {
+        //     await amazonUpdateSyncedListing(
+        //       decryptedToken,
+        //       true,
+        //       errorRecord,
+        //       listing,
+        //       {
+        //         sellerId: store.marketplaceOptions.sellerId,
+        //         marketplaceId: store.marketplaceOptions.marketplaceId,
+        //         issueLocale: store.marketplaceOptions.issueLocale
+        //       },
+        //       startPrice,
+        //       quantity,
+        //       store.marketplaceOptions.optimalPricingWindow
+        //     );
+        //   }
+      
+          if (errorRecord.errorSwitch && errorRecord.majorError) {
+            return { error: errorRecord.error }
+          };
+      
+          const listingSyncedInfo = {
+            sku,
+            startPrice,
+            competitorInfo,
+            title,
+            quantity,
+            shippingCost,
+            suppliersPrices,
+            priceMarkUp: storeMarkUp * 100
+          };
+      
+          await this.updateDatabaseSyncedListing(
+            true,
+            false,
+            listing,
+            errorRecord.errorSwitch,
+            listingSyncedInfo,
+            inventoryItem,
+            formula
+          );
+      
+          return false;
+        } catch (error) {
+          console.error(`jobs => storeSyncing => func syncListing: ${listing.sku}:`, error.message);
+          await this.listingModel.updateOne(
+            { _id: listing._id },
+            {
+              $push: {
+                errorLogs: {
+                  id: "func syncListing",
+                  message: error.message
+                }
+              }
+            }
+          );
+        }
+    };
+
+    async reviseListing(
+        decryptedToken, 
+        store, 
+        suppliers, 
+        listing, 
+        errorRecord
+    ) {
         const title = listing.listingInfo.title;
         const quantity = listing.listingInfo.quantity;
         let startPrice = parseFloat(listing.listingInfo.startPrice.value);
@@ -301,116 +630,123 @@ export class ListingService {
         const inventoryPrices = { ...listing.inventoryInfo.prices };
       
         Object.keys(inventoryPrices).forEach(price => {
-          inventoryPrices[price] = parseFloat(inventoryPrices[price]);
+            inventoryPrices[price] = parseFloat(inventoryPrices[price]);
         });
       
         const calculator = PriceCalculatorSupplier.getCalculator(
-          supplierConfig.supplier,
-          storeMarkUp + 1,
-          inventoryPrices,
-          supplierConfig.priceFormulas,
-          shippingCost
+            supplierConfig.supplier,
+            storeMarkUp + 1,
+            inventoryPrices,
+            supplierConfig.priceFormulas,
+            shippingCost
         );
         
         let sellingPrice = startPrice;
         let formula = listing.inventoryInfo.appliedFormula;
       
-        let { sellingPriceB, formulaB } = calculator.calculate();
+        // let { sellingPriceB, formulaB } = calculator.calculate();
       
       
-        if (!listing.listingInfo.startPrice.immutability) {
-          let sellingPrice = sellingPriceB;
-          let formula = formulaB;
-        }
+        // if (!listing.listingInfo.startPrice.immutability) {
+        //     let sellingPrice = sellingPriceB;
+        //     let formula = formulaB;
+        // }
       
         const calculatorNoMarkUp = PriceCalculatorSupplier.getCalculator(
-          supplierConfig.supplier,
-          1,
-          inventoryPrices,
-          supplierConfig.priceFormulas,
-          shippingCost
+            supplierConfig.supplier,
+            1,
+            inventoryPrices,
+            supplierConfig.priceFormulas,
+            shippingCost
         );
       
         let { price: supplierCost } = calculatorNoMarkUp.calculate();
       
         if (sellingPrice !== null) {
-          startPrice = sellingPrice.toFixed(2);
+          startPrice = parseFloat(sellingPrice.toFixed(2));
         } else {
-          await Listing.updateOne(
-            { _id: listing._id },
-            { $push: { "errorLogs": { id: "selling price not avaliable", message: formula } } }
-          );
+            await this.listingModel.updateOne(
+                { _id: listing._id },
+                { $push: { errorLogs: { id: 'selling price not avaliable', message: formula } } }
+            );
         }
       
         const supplierPrices = {
-          supplierId: supplierConfig._id,
-          supplier: supplierConfig.supplierNonCamelCase,
-          sellingPrice: typeof startPrice === "number"
-            ? startPrice.toFixed(2)
-            : startPrice,
-          formula,
-          shippingCost,
-          inventoryPrices: listing.inventoryInfo.prices,
-          net: (((startPrice - supplierCost) - (startPrice * 0.12))).toFixed(2),
-          supplierCost: supplierCost.toFixed(2),
-          totalCost: (supplierCost + (startPrice * 0.12)).toFixed(2),
-          ebayCost: (startPrice * 0.12).toFixed(2),
-          priceMarkUp: storeMarkUp * 100,
+            supplierId: supplierConfig._id,
+            supplier: supplierConfig.supplierNonCamelCase,
+            sellingPrice: typeof startPrice === "number"
+                ? parseFloat(startPrice.toFixed(2))
+                : parseFloat(startPrice),
+            formula,
+            shippingCost,
+            inventoryPrices: listing.inventoryInfo.prices,
+            net: parseFloat((((startPrice - supplierCost) - (startPrice * 0.12))).toFixed(2)),
+            supplierCost: parseFloat(supplierCost.toFixed(2)),
+            totalCost: parseFloat((supplierCost + (startPrice * 0.12)).toFixed(2)),
+            ebayCost: parseFloat((startPrice * 0.12).toFixed(2)),
+            priceMarkUp: storeMarkUp * 100,
+
+            // modification
+            netPercent: 0,
+            supplierCostPercent: 0,
+            totalCostPercent: 0,
+            ebayCostPercent: 0
         };
       
-        supplierPrices.netPercent = ((supplierPrices.net / supplierPrices.sellingPrice) * 100).toFixed(2);
-        supplierPrices.supplierCostPercent = ((supplierPrices.supplierCost / supplierPrices.sellingPrice) * 100).toFixed(2);
-        supplierPrices.totalCostPercent = ((supplierPrices.totalCost / supplierPrices.sellingPrice) * 100).toFixed(2);
-        supplierPrices.ebayCostPercent = ((supplierPrices.ebayCost / supplierPrices.sellingPrice) * 100).toFixed(2);
+        supplierPrices.netPercent = parseFloat(((supplierPrices.net / supplierPrices.sellingPrice) * 100).toFixed(2));
+        supplierPrices.supplierCostPercent = parseFloat(((supplierPrices.supplierCost / supplierPrices.sellingPrice) * 100).toFixed(2));
+        supplierPrices.totalCostPercent = parseFloat(((supplierPrices.totalCost / supplierPrices.sellingPrice) * 100).toFixed(2));
+        supplierPrices.ebayCostPercent = parseFloat(((supplierPrices.ebayCost / supplierPrices.sellingPrice) * 100).toFixed(2));
       
       
         const suppliersPrices = listing.suppliersPrices.map(obj => {
-          if (obj.supplier === supplierPrices.supplier) {
-            return supplierPrices;
-          }
-      
-          return obj;
+            if (obj.supplier === supplierPrices.supplier) {
+                return supplierPrices;
+            }
+        
+            return obj;
         });
       
         if (!errorRecord.errorSwitch && store.storeMarketplace === "ebay") {
-          await ebayUpdateSyncedListing(
-            decryptedToken,
-            true,
-            errorRecord,
-            listing,
-            startPrice,
-            quantity,
-            title
-          );
-        } else if (!errorRecord.errorSwitch && store.storeMarketplace === "amazon") {
-          await amazonUpdateSyncedListing(
-            decryptedToken,
-            true,
-            errorRecord,
-            listing,
-            {
-              sellerId: store.marketplaceOptions.sellerId,
-              marketplaceId: store.marketplaceOptions.marketplaceId,
-              issueLocale: store.marketplaceOptions.issueLocale
-            },
-            startPrice,
-            quantity,
-            store.marketplaceOptions.optimalPricingWindow
-          );
-        }
+            await this.ebayUpdateSyncedListing(
+                true,
+                errorRecord,
+                listing,
+                startPrice,
+                quantity,
+                title
+            );
+        } 
+        
+        // else if (!errorRecord.errorSwitch && store.storeMarketplace === "amazon") {
+        //   await amazonUpdateSyncedListing(
+        //     decryptedToken,
+        //     true,
+        //     errorRecord,
+        //     listing,
+        //     {
+        //       sellerId: store.marketplaceOptions.sellerId,
+        //       marketplaceId: store.marketplaceOptions.marketplaceId,
+        //       issueLocale: store.marketplaceOptions.issueLocale
+        //     },
+        //     startPrice,
+        //     quantity,
+        //     store.marketplaceOptions.optimalPricingWindow
+        //   );
+        // }
       
-        await updateDatabaseSyncedListing(
-          true,
-          true,
-          listing,
-          errorRecord.errorSwitch,
-          {
-            startPrice,
-            suppliersPrices,
-            priceMarkUp: storeMarkUp * 100
-          },
-          null,
-          formula
+        await this.updateDatabaseSyncedListing(
+            true,
+            true,
+            listing,
+            errorRecord.errorSwitch,
+            {
+                startPrice,
+                suppliersPrices,
+                priceMarkUp: storeMarkUp * 100
+            },
+            null,
+            formula
         );
     };
       
@@ -422,7 +758,7 @@ export class ListingService {
       
           const supplierConfig = suppliers[`${supplierId}-config`];
           const shippingInfo = suppliers[`${supplierId}-shipping`];
-          const shippingCost = await calculateShippingCost(shippingInfo, supplierItem, listing.sku);
+          const shippingCost = await CalculateShippingCost(shippingInfo, supplierItem, listing.sku);
       
           const storeMarkUp = store.supplierMarkUps.find(obj => obj.supplierId.toString() === supplierId.toString()).markUpPercent / 100;
       
@@ -450,21 +786,27 @@ export class ListingService {
             const supplierPrices = {
               supplierId: supplierConfig._id,
               supplier: supplierConfig.supplierNonCamelCase,
-              sellingPrice: sellingPrice.toFixed(2),
+              sellingPrice: parseFloat(sellingPrice.toFixed(2)),
               formula,
               shippingCost,
               inventoryPrices: supplierItem.prices,
-              net: (((sellingPrice - supplierCost) - (sellingPrice * 0.12))).toFixed(2),
-              supplierCost: supplierCost.toFixed(2),
-              totalCost: (supplierCost + (sellingPrice * 0.12)).toFixed(2),
-              ebayCost: (sellingPrice * 0.12).toFixed(2),
+              net: parseFloat((((sellingPrice - supplierCost) - (sellingPrice * 0.12))).toFixed(2)),
+              supplierCost: parseFloat(supplierCost.toFixed(2)),
+              totalCost: parseFloat((supplierCost + (sellingPrice * 0.12)).toFixed(2)),
+              ebayCost: parseFloat((sellingPrice * 0.12).toFixed(2)),
               priceMarkUp: storeMarkUp * 100,
+
+              // modification
+              netPercent: 0,
+              supplierCostPercent: 0,
+              totalCostPercent: 0,
+              ebayCostPercent: 0
             };
       
-            supplierPrices.netPercent = ((supplierPrices.net / supplierPrices.sellingPrice) * 100).toFixed(2);
-            supplierPrices.supplierCostPercent = ((supplierPrices.supplierCost / supplierPrices.sellingPrice) * 100).toFixed(2);
-            supplierPrices.totalCostPercent = ((supplierPrices.totalCost / supplierPrices.sellingPrice) * 100).toFixed(2);
-            supplierPrices.ebayCostPercent = ((supplierPrices.ebayCost / supplierPrices.sellingPrice) * 100).toFixed(2);
+            supplierPrices.netPercent = parseFloat(((supplierPrices.net / supplierPrices.sellingPrice) * 100).toFixed(2));
+            supplierPrices.supplierCostPercent = parseFloat(((supplierPrices.supplierCost / supplierPrices.sellingPrice) * 100).toFixed(2));
+            supplierPrices.totalCostPercent = parseFloat(((supplierPrices.totalCost / supplierPrices.sellingPrice) * 100).toFixed(2));
+            supplierPrices.ebayCostPercent = parseFloat(((supplierPrices.ebayCost / supplierPrices.sellingPrice) * 100).toFixed(2));
       
             suppliersPrices.push(supplierPrices);
           }
@@ -562,7 +904,65 @@ export class ListingService {
         }
     }
     
-      // Function to handle eBay API errors
+    async updateDatabaseSyncedListing(
+        itemAvailable, 
+        revise, 
+        listing, 
+        errorSwitch, 
+        listingChanges, 
+        inventoryItem, 
+        priceFormula
+    ) {
+        let updateQuery = null;
+
+        updateQuery = {
+            "listingInfo.quantity": 0,
+            // "ebayInfo.soldQuantity": listingChanges.soldQuantity,
+            sku: listing.sku,
+            synced: !errorSwitch,
+            updateType: 'sync'
+        };
+      
+        if (revise) {
+            updateQuery = {
+                "listingInfo.startPrice.value": listingChanges.startPrice,
+                suppliersPrices: listingChanges.suppliersPrices,
+                priceMarkUp: listingChanges.priceMarkUp,
+                synced: !errorSwitch,
+                updateType: 'sync'
+            };
+        } else if (itemAvailable) {
+            updateQuery = {
+                "listingInfo.startPrice.value": listingChanges.startPrice,
+                "listingInfo.quantity": listingChanges.quantity,
+                "listingInfo.title": listingChanges.title,
+                // "ebayInfo.soldQuantity": listingChanges.soldQuantity,
+                inventoryInfo: {
+                prices: inventoryItem.prices,
+                weightLb: inventoryItem.weightLb || 0,
+                description: inventoryItem.description,
+                quantity: inventoryItem.quantity,
+                oem: inventoryItem.oem,
+                partslink: inventoryItem.partslink,
+                itemNumber: inventoryItem.itemNumber,
+                appliedFormula: priceFormula,
+                shippingCost: listingChanges.shippingCost
+                },
+                suppliersPrices: listingChanges.suppliersPrices,
+                priceMarkUp: listingChanges.priceMarkUp,
+                supplierId: inventoryItem.supplierId,
+                sku: listing.sku,
+                synced: !errorSwitch,
+                updateType: 'sync'
+            };
+        
+            if (listingChanges?.competitorInfo) {
+                updateQuery.competitorInfo = listingChanges.competitorInfo;
+            }
+        };
+        await this.listingModel.findByIdAndUpdate(listing._id, updateQuery);
+    };
+    
     private async handleEbayApiErrors(errorsArr: any, listingId: string, errorRecord: any): Promise<any> {
         const errorCodes = [
           "518", // call limit
@@ -602,6 +1002,4 @@ export class ListingService {
           console.log('modules => ebay => func handleEbayApiErrors:', error);
         }
     }
-
-    
 }

@@ -29,7 +29,7 @@ export class ListingController {
 
     @Get('init-ebay-sync')
     initEbaySync() {
-        return this.listingService.initSync();
+        // return this.listingService.initSync();
     }
 
     // ✅ Get Marketplace by ID
